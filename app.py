@@ -4,20 +4,20 @@ from thefuzz import fuzz
 from io import BytesIO
 
 # ------------------------
-# Page Configuration
+# Page Setup
 # ------------------------
 st.set_page_config(page_title="SAP vs PLM Comparison", layout="wide")
 st.title("📊 SAP vs PLM Validation Tool")
 
 st.write("""
 Upload your **SAP (Base)** file and **PLM** file.  
-The tool performs the following:
-- Checks for duplicate Materials before merging  
-- Compares Material, Component, and Vendor Reference  
-- Identifies invalid Components (start with '3' or contain '-')  
-- Verifies Vendor References across both Vendor Ref and Material Description  
-- Compares SAP vs PLM Consumption  
-- Generates similarity scores and summary counts  
+This tool will:
+- Identify duplicate Materials before merging  
+- Compare Material, Component, Vendor Reference, and Consumption  
+- Flag invalid Components (start with '3' or containing '-')  
+- Match Vendor References even if they appear only in descriptions  
+- Compare SAP vs PLM consumption  
+- Calculate similarity scores and show accurate summary counts (without duplication inflation)
 """)
 
 # ------------------------
@@ -36,7 +36,7 @@ if sap_file and plm_file:
         plm_df.columns = plm_df.columns.str.strip()
 
         # ------------------------
-        # Duplicates Report
+        # Duplicate Report
         # ------------------------
         sap_dupes = sap_df[sap_df.duplicated(subset=["Material"], keep=False)]
         plm_dupes = plm_df[plm_df.duplicated(subset=["Material"], keep=False)]
@@ -55,12 +55,8 @@ if sap_file and plm_file:
             else:
                 c2.success("✅ No duplicate Materials in PLM file.")
 
-        # Drop duplicates to prevent row multiplication
-        sap_df = sap_df.drop_duplicates(subset=["Material"])
-        plm_df = plm_df.drop_duplicates(subset=["Material"])
-
         # ------------------------
-        # Step 1: Material Matching
+        # Step 1: Material Merge (keep duplicates)
         # ------------------------
         merged_df = pd.merge(
             sap_df, plm_df,
@@ -71,7 +67,7 @@ if sap_file and plm_file:
         merged_df["Material_Match"] = merged_df["Material"].notna().map({True: "Matched", False: "Missing in PLM"})
 
         # ------------------------
-        # Step 2: Component Flag
+        # Step 2: Component Check
         # ------------------------
         if "Component" in merged_df.columns:
             merged_df["Component_Flag"] = merged_df["Component"].apply(
@@ -139,26 +135,28 @@ if sap_file and plm_file:
         )
 
         # ------------------------
-        # Step 6: Summary Counts
+        # Step 6: Accurate Summary Counts (deduplicated)
         # ------------------------
-        total_rows = len(merged_df)
-        matched_materials = (merged_df["Material_Match"] == "Matched").sum()
-        invalid_components = (merged_df["Component_Flag"] == "Check (Invalid)").sum()
-        sap_higher = (merged_df["Consumption_Status"] == "SAP Consumption Higher").sum()
+        summary_df = merged_df.drop_duplicates(subset=["Material"])
+        total_rows = len(summary_df)
+        matched_materials = (summary_df["Material_Match"] == "Matched").sum()
+        invalid_components = (summary_df["Component_Flag"] == "Check (Invalid)").sum()
+        sap_higher = (summary_df["Consumption_Status"] == "SAP Consumption Higher").sum()
 
-        st.subheader("📈 Summary Overview")
+        st.subheader("📈 Summary Overview (Unique Materials)")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Records", total_rows)
+        c1.metric("Total Unique Materials", total_rows)
         c2.metric("Material Matches", matched_materials)
         c3.metric("Invalid Components", invalid_components)
         c4.metric("SAP Higher Consumption", sap_higher)
 
         # ------------------------
-        # Step 7: Save to Excel
+        # Step 7: Export
         # ------------------------
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             merged_df.to_excel(writer, sheet_name="Comparison_Report", index=False)
+            summary_df.to_excel(writer, sheet_name="Summary_Unique", index=False)
             if len(sap_dupes) > 0:
                 sap_dupes.to_excel(writer, sheet_name="SAP_Duplicates", index=False)
             if len(plm_dupes) > 0:
@@ -173,7 +171,7 @@ if sap_file and plm_file:
         )
 
         # ------------------------
-        # Step 8: Preview Table
+        # Step 8: Preview
         # ------------------------
         st.subheader("🔍 Preview of Comparison Results")
         preview_cols = [
