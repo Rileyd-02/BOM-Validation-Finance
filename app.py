@@ -32,15 +32,15 @@ if sap_file and plm_file:
         plm_df.columns = plm_df.columns.str.strip()
 
       # --- Step 1: Material Matching (handle duplicates safely) ---
-sap_df = sap_df.drop_duplicates(subset=["Material"])
-plm_df = plm_df.drop_duplicates(subset=["Material"])
+       sap_df = sap_df.drop_duplicates(subset=["Material"])
+       plm_df = plm_df.drop_duplicates(subset=["Material"])
 
-merged_df = pd.merge(
-    sap_df, plm_df,
-    on="Material",
-    how="left",
-    suffixes=("_SAP", "_PLM")
-)
+       merged_df = pd.merge(
+       sap_df, plm_df,
+       on="Material",
+       how="left",
+       suffixes=("_SAP", "_PLM")
+       )
 
 
         merged_df["Material_Match"] = merged_df["Material"].notna().map({True: "Matched", False: "Missing in PLM"})
@@ -139,4 +139,5 @@ merged_df = pd.merge(
         st.error(f"❌ Error while processing: {e}")
 else:
     st.info("⬆️ Please upload both SAP and PLM files to start comparison.")
+
 
