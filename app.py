@@ -12,7 +12,6 @@ st.title("📊 SAP vs PLM Validation Tool")
 st.write("""
 Upload your **SAP (Base)** file and **PLM** file.  
 This tool will:
-- Identify duplicate Materials before merging  
 - Compare Material, Component, Vendor Reference, and Consumption  
 - Flag invalid Components (start with '3' or containing '-')  
 - Match Vendor References even if they appear only in descriptions  
@@ -173,12 +172,12 @@ if sap_file and plm_file:
         # ------------------------
         # Step 8: Preview
         # ------------------------
-        st.subheader("🔍 Preview of Comparison Results")
+        st.subheader("🔍 Preview of Results")
         preview_cols = [
             "Material", "Material Description_SAP", "Vendor Reference_SAP", "Vendor Reference_PLM",
             "Component_Flag", "SAP_Consumption", "PLM_Consumption",
             "Material_Match", "VendorRef_Status", "Consumption_Status",
-            "Material_Similarity", "Color_Similarity", "Consumption_Similarity"
+            "Material_Similarity", "Color_Similarity", "Consumption_Difference"
         ]
         available_cols = [c for c in preview_cols if c in merged_df.columns]
         st.dataframe(merged_df[available_cols].head(100))
@@ -188,3 +187,4 @@ if sap_file and plm_file:
 
 else:
     st.info("⬆️ Please upload both SAP and PLM files to start comparison.")
+
