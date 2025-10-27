@@ -12,7 +12,7 @@ The tool checks:
 - Material matches  
 - Component issues (`'-'` or starting with '3')  
 - Vendor Reference matches (exact or inside description)  
-- Adjusted consumption comparison (Base Qty handled)  
+- Adjusted consumption comparison (Base Qty handled as decimal)  
 and provides summary counts, duplicates report, and a clean preview.
 """)
 
@@ -76,34 +76,33 @@ if sap_file and plm_file:
 
         merged_df["VendorRef_Status"] = merged_df.apply(check_vendor_ref, axis=1)
 
-        # --- Step 4: Consumption Comparison (adjusted) ---
-        if "Comp.Qty." in sap_df.columns and "Base Quantity(AA)" in sap_df.columns:
-            merged_df["SAP_Consumption"] = merged_df.apply(
-                lambda x: round(
-                    float(x["Comp.Qty."]) / float(x["Base Quantity(AA)"])
-                    if pd.notna(x["Comp.Qty."]) and pd.notna(x["Base Quantity(AA)"]) and x["Base Quantity(AA)"] != 0
-                    else 0, 4
-                ),
-                axis=1
-            )
-        else:
-            merged_df["SAP_Consumption"] = 0.0
+        # --- Step 4: Adjusted SAP Consumption (Base Quantity handled) ---
+        def calculate_sap_consumption(row):
+            try:
+                comp_qty = float(row.get("Comp.Qty.", 0))
+                base_qty = float(row.get("Base Quantity(AA)", 1))
+                if base_qty in [1000, 100, 1] and base_qty != 0:
+                    return round(comp_qty / base_qty, 4)
+                return 0.0
+            except Exception:
+                return 0.0
 
+        merged_df["SAP_Consumption"] = merged_df.apply(calculate_sap_consumption, axis=1)
+
+        # --- Step 5: PLM Consumption ---
         if "Qty(Cons.)" in plm_df.columns:
-            merged_df["PLM_Consumption"] = merged_df["Qty(Cons.)"].fillna(0).astype(float)
+            merged_df["PLM_Consumption"] = merged_df["Qty(Cons.)"].fillna(0).astype(float).round(4)
         else:
             merged_df["PLM_Consumption"] = 0.0
 
-        # Calculate difference
+        # --- Step 6: Difference and Status ---
         merged_df["Consumption_Difference"] = (merged_df["SAP_Consumption"] - merged_df["PLM_Consumption"]).round(4)
-
-        # Status flag
         merged_df["Consumption_Status"] = merged_df.apply(
             lambda x: "SAP Consumption Higher" if x["Consumption_Difference"] > 0 else "OK",
             axis=1
         )
 
-        # --- Step 5: Similarity Scores (Material + Color) ---
+        # --- Step 7: Similarity Scores ---
         def safe_ratio(a, b):
             return fuzz.token_sort_ratio(str(a), str(b))
 
@@ -114,7 +113,7 @@ if sap_file and plm_file:
             lambda x: safe_ratio(x.get("Color_SAP", ""), x.get("Color_PLM", "")), axis=1
         )
 
-        # --- Step 6: Summary (deduplicated) ---
+        # --- Step 8: Summary (deduplicated) ---
         summary_df = merged_df.drop_duplicates(subset=["Material"])
         total_rows = len(summary_df)
         matched_materials = (summary_df["Material_Match"] == "Matched").sum()
@@ -128,7 +127,13 @@ if sap_file and plm_file:
         c3.metric("Invalid Components", invalid_components)
         c4.metric("SAP Higher Consumption", sap_higher)
 
-        # --- Step 7: Save to Excel ---
+        # --- Step 9: Format decimals for output ---
+        decimal_cols = ["SAP_Consumption", "PLM_Consumption", "Consumption_Difference"]
+        for col in decimal_cols:
+            if col in merged_df.columns:
+                merged_df[col] = merged_df[col].astype(float).map("{:.4f}".format)
+
+        # --- Step 10: Save to Excel ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             merged_df.to_excel(writer, sheet_name="Comparison_Report", index=False)
@@ -145,7 +150,7 @@ if sap_file and plm_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # --- Step 8: Preview ---
+        # --- Step 11: Preview ---
         st.subheader("🔍 Preview of Results")
         preview_cols = [
             "Bill of material", "Material", "Material Description",
