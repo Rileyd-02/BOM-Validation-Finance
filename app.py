@@ -3,22 +3,17 @@ import pandas as pd
 from thefuzz import fuzz
 from io import BytesIO
 
-# ------------------------
-# Page Setup
-# ------------------------
-st.set_page_config(page_title="SAP vs PLM Comparison", layout="wide")
+st.set_page_config(page_title="SAP vs PLM Validation Tool", layout="wide")
 st.title("📊 SAP vs PLM Validation Tool")
 
 st.write("""
-Upload your **SAP (Base)** file and **PLM** file.  
-This tool:
-- Detects duplicate Materials  
-- Validates Components (`'-'` or starting with '3'`)  
-- Matches Vendor References (direct or in description)  
-- Adjusts SAP Consumption by Base Quantity (1000, 100, or 1)  
-- Compares normalized SAP vs PLM consumption  
-- Calculates similarity scores  
-- Provides accurate summary counts without duplication inflation  
+Upload your SAP (Base) file and PLM file.  
+The tool checks:
+- Material matches  
+- Component issues (`'-'` or starting with '3')  
+- Vendor Reference matches (exact or inside description)  
+- Adjusted consumption comparison (Base Qty handled)  
+and provides summary counts, duplicates report, and a clean preview.
 """)
 
 # ------------------------
@@ -36,54 +31,40 @@ if sap_file and plm_file:
         sap_df.columns = sap_df.columns.str.strip()
         plm_df.columns = plm_df.columns.str.strip()
 
-        # ------------------------
-        # Duplicate Report
-        # ------------------------
+        # --- Duplicates Report ---
         sap_dupes = sap_df[sap_df.duplicated(subset=["Material"], keep=False)]
         plm_dupes = plm_df[plm_df.duplicated(subset=["Material"], keep=False)]
 
-        with st.expander("📋 View Duplicates Report"):
-            c1, c2 = st.columns(2)
-            c1.subheader("SAP Duplicates")
-            if len(sap_dupes) > 0:
-                c1.dataframe(sap_dupes)
-            else:
-                c1.success("✅ No duplicate Materials in SAP file.")
+        with st.expander("🔁 Duplicates Report"):
+            st.write("**SAP duplicates (by Material):**", len(sap_dupes))
+            if not sap_dupes.empty:
+                st.dataframe(sap_dupes)
+            st.write("**PLM duplicates (by Material):**", len(plm_dupes))
+            if not plm_dupes.empty:
+                st.dataframe(plm_dupes)
 
-            c2.subheader("PLM Duplicates")
-            if len(plm_dupes) > 0:
-                c2.dataframe(plm_dupes)
-            else:
-                c2.success("✅ No duplicate Materials in PLM file.")
-
-        # ------------------------
-        # Step 1: Merge
-        # ------------------------
+        # --- Step 1: Material Merge ---
         merged_df = pd.merge(
             sap_df, plm_df,
             on="Material",
             how="left",
             suffixes=("_SAP", "_PLM")
         )
-        merged_df["Material_Match"] = merged_df["Material"].notna().map({True: "Matched", False: "Missing in PLM"})
 
-        # ------------------------
-        # Step 2: Component Flag
-        # ------------------------
-        if "Component" in merged_df.columns:
-            merged_df["Component_Flag"] = merged_df["Component"].apply(
-                lambda x: "Check (Invalid)" if isinstance(x, str) and (x.startswith("3") or "-" in x) else "OK"
-            )
-        else:
-            merged_df["Component_Flag"] = "Column Missing"
+        merged_df["Material_Match"] = merged_df["Material"].notna().map(
+            {True: "Matched", False: "Missing in PLM"}
+        )
 
-        # ------------------------
-        # Step 3: Vendor Reference Match
-        # ------------------------
+        # --- Step 2: Component Flag ---
+        merged_df["Component_Flag"] = merged_df["Component"].apply(
+            lambda x: "Check (Invalid)" if isinstance(x, str) and (x.startswith("3") or "-" in x) else "OK"
+        )
+
+        # --- Step 3: Vendor Reference Logic ---
         def check_vendor_ref(row):
             plm_ref = str(row.get("Vendor Reference_PLM", "")).strip()
             sap_v_ref = str(row.get("Vendor Reference_SAP", "")).strip()
-            sap_desc = str(row.get("Material Description_SAP", "")).strip()
+            sap_desc = str(row.get("Material Description", "")).strip()
 
             if not plm_ref:
                 return "No Vendor Ref in PLM"
@@ -95,51 +76,36 @@ if sap_file and plm_file:
 
         merged_df["VendorRef_Status"] = merged_df.apply(check_vendor_ref, axis=1)
 
-        # ------------------------
-        # Step 4: Normalize SAP Consumption by Base Quantity
-        # ------------------------
-        sap_qty_col = next((c for c in sap_df.columns if "Comp" in c and "Qty" in c), None)
-        base_qty_col = next((c for c in sap_df.columns if "Base" in c and "Qty" in c), None)
-        plm_qty_col = next((c for c in plm_df.columns if "Qty" in c and "Cons" in c), None)
+        # --- Step 4: Consumption Comparison (adjusted) ---
+        if "Comp.Qty." in sap_df.columns and "Base Quantity(AA)" in sap_df.columns:
+            merged_df["SAP_Consumption"] = merged_df.apply(
+                lambda x: round(
+                    float(x["Comp.Qty."]) / float(x["Base Quantity(AA)"])
+                    if pd.notna(x["Comp.Qty."]) and pd.notna(x["Base Quantity(AA)"]) and x["Base Quantity(AA)"] != 0
+                    else 0, 4
+                ),
+                axis=1
+            )
+        else:
+            merged_df["SAP_Consumption"] = 0.0
 
-        merged_df["SAP_Consumption"] = 0.0
-        merged_df["PLM_Consumption"] = 0.0
+        if "Qty(Cons.)" in plm_df.columns:
+            merged_df["PLM_Consumption"] = merged_df["Qty(Cons.)"].fillna(0).astype(float)
+        else:
+            merged_df["PLM_Consumption"] = 0.0
 
-        if sap_qty_col:
-            merged_df["SAP_Consumption"] = merged_df[sap_qty_col].fillna(0)
-            if base_qty_col:
-                merged_df["Base_Qty"] = merged_df[base_qty_col].fillna(1)
-                merged_df["SAP_Consumption"] = merged_df.apply(
-                    lambda x: round(x[sap_qty_col] / x["Base_Qty"], 5)
-                    if x["Base_Qty"] in [1000, 100, 1] and x["Base_Qty"] != 0 else round(x[sap_qty_col], 5),
-                    axis=1
-                )
+        # Calculate difference
+        merged_df["Consumption_Difference"] = (merged_df["SAP_Consumption"] - merged_df["PLM_Consumption"]).round(4)
 
-        if plm_qty_col:
-            merged_df["PLM_Consumption"] = merged_df[plm_qty_col].fillna(0).round(5)
-
-        # ------------------------
-        # Step 5: Consumption Comparison
-        # ------------------------
+        # Status flag
         merged_df["Consumption_Status"] = merged_df.apply(
-            lambda x: "SAP Consumption Higher"
-            if x["SAP_Consumption"] > x["PLM_Consumption"]
-            else "OK",
+            lambda x: "SAP Consumption Higher" if x["Consumption_Difference"] > 0 else "OK",
             axis=1
         )
 
-        merged_df["Consumption_Difference"] = (
-            merged_df["SAP_Consumption"] - merged_df["PLM_Consumption"]
-        ).round(5)
-
-        # ------------------------
-        # Step 6: Similarity Scores
-        # ------------------------
+        # --- Step 5: Similarity Scores (Material + Color) ---
         def safe_ratio(a, b):
-            try:
-                return fuzz.token_sort_ratio(str(a), str(b))
-            except Exception:
-                return 0
+            return fuzz.token_sort_ratio(str(a), str(b))
 
         merged_df["Material_Similarity"] = merged_df.apply(
             lambda x: safe_ratio(x.get("Material", ""), x.get("Material", "")), axis=1
@@ -147,36 +113,28 @@ if sap_file and plm_file:
         merged_df["Color_Similarity"] = merged_df.apply(
             lambda x: safe_ratio(x.get("Color_SAP", ""), x.get("Color_PLM", "")), axis=1
         )
-        merged_df["Consumption_Similarity"] = merged_df.apply(
-            lambda x: safe_ratio(x.get("SAP_Consumption", ""), x.get("PLM_Consumption", "")), axis=1
-        )
 
-        # ------------------------
-        # Step 7: Summary Counts (deduplicated)
-        # ------------------------
+        # --- Step 6: Summary (deduplicated) ---
         summary_df = merged_df.drop_duplicates(subset=["Material"])
         total_rows = len(summary_df)
         matched_materials = (summary_df["Material_Match"] == "Matched").sum()
         invalid_components = (summary_df["Component_Flag"] == "Check (Invalid)").sum()
         sap_higher = (summary_df["Consumption_Status"] == "SAP Consumption Higher").sum()
 
-        st.subheader("📈 Summary Overview (Unique Materials)")
+        st.subheader("📋 Summary Overview")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Unique Materials", total_rows)
+        c1.metric("Total Records", total_rows)
         c2.metric("Material Matches", matched_materials)
         c3.metric("Invalid Components", invalid_components)
         c4.metric("SAP Higher Consumption", sap_higher)
 
-        # ------------------------
-        # Step 8: Export
-        # ------------------------
+        # --- Step 7: Save to Excel ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             merged_df.to_excel(writer, sheet_name="Comparison_Report", index=False)
-            summary_df.to_excel(writer, sheet_name="Summary_Unique", index=False)
-            if len(sap_dupes) > 0:
+            if not sap_dupes.empty:
                 sap_dupes.to_excel(writer, sheet_name="SAP_Duplicates", index=False)
-            if len(plm_dupes) > 0:
+            if not plm_dupes.empty:
                 plm_dupes.to_excel(writer, sheet_name="PLM_Duplicates", index=False)
         output.seek(0)
 
@@ -187,21 +145,20 @@ if sap_file and plm_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # ------------------------
-        # Step 9: Preview
-        # ------------------------
-        st.subheader("🔍 Preview of Comparison Results")
+        # --- Step 8: Preview ---
+        st.subheader("🔍 Preview of Results")
         preview_cols = [
-            "Material", "Material Description_SAP", "Vendor Reference_SAP", "Vendor Reference_PLM",
-            "Component_Flag", "Base_Qty", "SAP_Consumption", "PLM_Consumption",
-            "Consumption_Difference", "Material_Match", "VendorRef_Status", "Consumption_Status",
-            "Material_Similarity", "Color_Similarity", "Consumption_Similarity"
+            "Bill of material", "Material", "Material Description",
+            "Vendor Reference_SAP", "Vendor Reference_PLM",
+            "Component", "SAP_Consumption", "PLM_Consumption",
+            "Consumption_Difference", "Material_Match", "Component_Flag",
+            "VendorRef_Status", "Consumption_Status",
+            "Material_Similarity", "Color_Similarity"
         ]
-        available_cols = [c for c in preview_cols if c in merged_df.columns]
-        st.dataframe(merged_df[available_cols].head(100))
+        preview_cols = [c for c in preview_cols if c in merged_df.columns]
+        st.dataframe(summary_df[preview_cols].head(100))
 
     except Exception as e:
         st.error(f"❌ Error while processing: {e}")
-
 else:
     st.info("⬆️ Please upload both SAP and PLM files to start comparison.")
