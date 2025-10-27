@@ -11,12 +11,14 @@ st.title("📊 SAP vs PLM Validation Tool")
 
 st.write("""
 Upload your **SAP (Base)** file and **PLM** file.  
-This tool will:
-- Compare Material, Component, Vendor Reference, and Consumption  
-- Flag invalid Components (start with '3' or containing '-')  
-- Match Vendor References even if they appear only in descriptions  
-- Compare SAP vs PLM consumption  
-- Calculate similarity scores and show accurate summary counts (without duplication inflation)
+This tool:
+- Detects duplicate Materials  
+- Validates Components (`'-'` or starting with '3'`)  
+- Matches Vendor References (direct or in description)  
+- Adjusts SAP Consumption by Base Quantity (1000, 100, or 1)  
+- Compares normalized SAP vs PLM consumption  
+- Calculates similarity scores  
+- Provides accurate summary counts without duplication inflation  
 """)
 
 # ------------------------
@@ -55,7 +57,7 @@ if sap_file and plm_file:
                 c2.success("✅ No duplicate Materials in PLM file.")
 
         # ------------------------
-        # Step 1: Material Merge (keep duplicates)
+        # Step 1: Merge
         # ------------------------
         merged_df = pd.merge(
             sap_df, plm_df,
@@ -66,7 +68,7 @@ if sap_file and plm_file:
         merged_df["Material_Match"] = merged_df["Material"].notna().map({True: "Matched", False: "Missing in PLM"})
 
         # ------------------------
-        # Step 2: Component Check
+        # Step 2: Component Flag
         # ------------------------
         if "Component" in merged_df.columns:
             merged_df["Component_Flag"] = merged_df["Component"].apply(
@@ -85,37 +87,53 @@ if sap_file and plm_file:
 
             if not plm_ref:
                 return "No Vendor Ref in PLM"
-
             if plm_ref == sap_v_ref:
                 return "Exact Match"
-
             if plm_ref in sap_desc:
                 return "Found in Description"
-
             return "Not Found"
 
         merged_df["VendorRef_Status"] = merged_df.apply(check_vendor_ref, axis=1)
 
         # ------------------------
-        # Step 4: Consumption Comparison
+        # Step 4: Normalize SAP Consumption by Base Quantity
         # ------------------------
         sap_qty_col = next((c for c in sap_df.columns if "Comp" in c and "Qty" in c), None)
+        base_qty_col = next((c for c in sap_df.columns if "Base" in c and "Qty" in c), None)
         plm_qty_col = next((c for c in plm_df.columns if "Qty" in c and "Cons" in c), None)
 
-        if sap_qty_col and plm_qty_col:
-            merged_df["SAP_Consumption"] = merged_df[sap_qty_col].fillna(0)
-            merged_df["PLM_Consumption"] = merged_df[plm_qty_col].fillna(0)
-        else:
-            merged_df["SAP_Consumption"] = 0
-            merged_df["PLM_Consumption"] = 0
+        merged_df["SAP_Consumption"] = 0.0
+        merged_df["PLM_Consumption"] = 0.0
 
+        if sap_qty_col:
+            merged_df["SAP_Consumption"] = merged_df[sap_qty_col].fillna(0)
+            if base_qty_col:
+                merged_df["Base_Qty"] = merged_df[base_qty_col].fillna(1)
+                merged_df["SAP_Consumption"] = merged_df.apply(
+                    lambda x: round(x[sap_qty_col] / x["Base_Qty"], 5)
+                    if x["Base_Qty"] in [1000, 100, 1] and x["Base_Qty"] != 0 else round(x[sap_qty_col], 5),
+                    axis=1
+                )
+
+        if plm_qty_col:
+            merged_df["PLM_Consumption"] = merged_df[plm_qty_col].fillna(0).round(5)
+
+        # ------------------------
+        # Step 5: Consumption Comparison
+        # ------------------------
         merged_df["Consumption_Status"] = merged_df.apply(
-            lambda x: "SAP Consumption Higher" if x["SAP_Consumption"] > x["PLM_Consumption"] else "OK",
+            lambda x: "SAP Consumption Higher"
+            if x["SAP_Consumption"] > x["PLM_Consumption"]
+            else "OK",
             axis=1
         )
 
+        merged_df["Consumption_Difference"] = (
+            merged_df["SAP_Consumption"] - merged_df["PLM_Consumption"]
+        ).round(5)
+
         # ------------------------
-        # Step 5: Similarity Scores
+        # Step 6: Similarity Scores
         # ------------------------
         def safe_ratio(a, b):
             try:
@@ -134,7 +152,7 @@ if sap_file and plm_file:
         )
 
         # ------------------------
-        # Step 6: Accurate Summary Counts (deduplicated)
+        # Step 7: Summary Counts (deduplicated)
         # ------------------------
         summary_df = merged_df.drop_duplicates(subset=["Material"])
         total_rows = len(summary_df)
@@ -150,7 +168,7 @@ if sap_file and plm_file:
         c4.metric("SAP Higher Consumption", sap_higher)
 
         # ------------------------
-        # Step 7: Export
+        # Step 8: Export
         # ------------------------
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -170,13 +188,13 @@ if sap_file and plm_file:
         )
 
         # ------------------------
-        # Step 8: Preview
+        # Step 9: Preview
         # ------------------------
-        st.subheader("🔍 Preview of Results")
+        st.subheader("🔍 Preview of Comparison Results")
         preview_cols = [
             "Material", "Material Description_SAP", "Vendor Reference_SAP", "Vendor Reference_PLM",
-            "Component_Flag", "SAP_Consumption", "PLM_Consumption",
-            "Material_Match", "VendorRef_Status", "Consumption_Status",
+            "Component_Flag", "Base_Qty", "SAP_Consumption", "PLM_Consumption",
+            "Consumption_Difference", "Material_Match", "VendorRef_Status", "Consumption_Status",
             "Material_Similarity", "Color_Similarity", "Consumption_Difference"
         ]
         available_cols = [c for c in preview_cols if c in merged_df.columns]
@@ -187,4 +205,3 @@ if sap_file and plm_file:
 
 else:
     st.info("⬆️ Please upload both SAP and PLM files to start comparison.")
-
