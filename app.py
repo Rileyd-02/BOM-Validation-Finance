@@ -153,7 +153,7 @@ if sap_file and plm_file:
         # --- Step 11: Preview ---
         st.subheader("🔍 Preview of Results")
         preview_cols = [
-            "Bill of material", "Material", "Material Description",
+            "Material", "Material Description",
             "Vendor Reference_SAP", "Vendor Reference_PLM",
             "Component", "SAP_Consumption", "PLM_Consumption",
             "Consumption_Difference", "Material_Match", "Component_Flag",
