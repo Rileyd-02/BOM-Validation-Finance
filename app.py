@@ -17,7 +17,7 @@ This tool:
 - Matches Vendor References (direct or in description)  
 - Adjusts SAP Consumption by Base Quantity (1000, 100, or 1)  
 - Compares normalized SAP vs PLM consumption  
-- Calculates similarity scores  
+- Calculates similarity scores (Material & Color only)  
 - Provides accurate summary counts without duplication inflation  
 """)
 
@@ -133,7 +133,7 @@ if sap_file and plm_file:
         ).round(5)
 
         # ------------------------
-        # Step 6: Similarity Scores
+        # Step 6: Similarity Scores (Material & Color only)
         # ------------------------
         def safe_ratio(a, b):
             try:
@@ -146,9 +146,6 @@ if sap_file and plm_file:
         )
         merged_df["Color_Similarity"] = merged_df.apply(
             lambda x: safe_ratio(x.get("Color_SAP", ""), x.get("Color_PLM", "")), axis=1
-        )
-        merged_df["Consumption_Similarity"] = merged_df.apply(
-            lambda x: safe_ratio(x.get("SAP_Consumption", ""), x.get("PLM_Consumption", "")), axis=1
         )
 
         # ------------------------
@@ -195,7 +192,7 @@ if sap_file and plm_file:
             "Material", "Material Description_SAP", "Vendor Reference_SAP", "Vendor Reference_PLM",
             "Component_Flag", "Base_Qty", "SAP_Consumption", "PLM_Consumption",
             "Consumption_Difference", "Material_Match", "VendorRef_Status", "Consumption_Status",
-            "Material_Similarity", "Color_Similarity", "Consumption_Similarity"
+            "Material_Similarity", "Color_Similarity"
         ]
         available_cols = [c for c in preview_cols if c in merged_df.columns]
         st.dataframe(merged_df[available_cols].head(100))
