@@ -147,7 +147,7 @@ if sap_file and plm_file:
         merged_df["Color_Similarity"] = merged_df.apply(
             lambda x: safe_ratio(x.get("Color_SAP", ""), x.get("Color_PLM", "")), axis=1
         )
-        merged_df["Consumption_Similarity"] = merged_df.apply(
+        merged_df["Consumption_Difference"] = merged_df.apply(
             lambda x: safe_ratio(x.get("SAP_Consumption", ""), x.get("PLM_Consumption", "")), axis=1
         )
 
@@ -205,3 +205,4 @@ if sap_file and plm_file:
 
 else:
     st.info("⬆️ Please upload both SAP and PLM files to start comparison.")
+
